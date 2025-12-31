@@ -24,7 +24,7 @@ namespace BookChat.ViewModels
         private Thread? _listenerThread;
         private string _server = "irc.irchighway.net";
         private int _port = 6667;
-        private string _nickname = "bernp";
+        private string _nickname = "ircuser";
         private string _channel = "#ebooks";
         private string _messageToSend = string.Empty;
         private bool _isConnected;
@@ -41,8 +41,8 @@ namespace BookChat.ViewModels
         private bool _autoImportToCalibre = false;
         private string _calibreDuplicateHandling = "ignore";
         private string _calibreContentServerUrl = "http://localhost:8080";
-        private string _calibreUsername = "bernpuc";
-        private string _calibrePassword = "gunnybun";
+        private string _calibreUsername = string.Empty;
+        private string _calibrePassword = string.Empty;
 
         public ObservableCollection<string> Messages { get; } = new();
         public ObservableCollection<FileOffer> FileOffers { get; } = new();

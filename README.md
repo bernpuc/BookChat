@@ -72,7 +72,7 @@ dotnet run
 Located in the **Settings** tab:
 - **Server**: irc.irchighway.net (default)
 - **Port**: 6667 (default)
-- **Nickname**: bernp (customizable)
+- **Nickname**: ircuser (customizable)
 - **Channel**: #ebooks (default)
 
 ### Calibre Settings
