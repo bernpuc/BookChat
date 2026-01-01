@@ -156,6 +156,9 @@ namespace BookChat.Services
                 // Parse filename to extract author, title, and format
                 ParseFilename(filename, result);
 
+                // Store filename for download tracking
+                result.FileName = filename;
+
                 // If no hash was found, use filename as identifier
                 if (string.IsNullOrEmpty(result.FileHash))
                 {

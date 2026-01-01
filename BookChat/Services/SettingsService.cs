@@ -13,7 +13,7 @@ namespace BookChat.Services
     public class SettingsService : ISettingsService
     {
         private readonly string _settingsDirectory;
-        private readonly string _calibreSettingsFile;
+        private readonly string _settingsFile;
 
         public SettingsService()
         {
@@ -21,24 +21,24 @@ namespace BookChat.Services
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "BookChat");
 
-            _calibreSettingsFile = Path.Combine(_settingsDirectory, "calibre-settings.json");
+            _settingsFile = Path.Combine(_settingsDirectory, "app-settings.json");
 
             // Ensure settings directory exists
             Directory.CreateDirectory(_settingsDirectory);
         }
 
         /// <summary>
-        /// Loads Calibre settings from JSON file
+        /// Loads application settings from JSON file
         /// </summary>
-        public async Task<CalibreSettings?> LoadCalibreSettingsAsync()
+        public async Task<AppSettings?> LoadSettingsAsync()
         {
             try
             {
-                if (!File.Exists(_calibreSettingsFile))
+                if (!File.Exists(_settingsFile))
                     return null;
 
-                var json = await File.ReadAllTextAsync(_calibreSettingsFile);
-                return JsonSerializer.Deserialize<CalibreSettings>(json);
+                var json = await File.ReadAllTextAsync(_settingsFile);
+                return JsonSerializer.Deserialize<AppSettings>(json);
             }
             catch (Exception)
             {
@@ -48,9 +48,9 @@ namespace BookChat.Services
         }
 
         /// <summary>
-        /// Saves Calibre settings to JSON file
+        /// Saves application settings to JSON file
         /// </summary>
-        public async Task SaveCalibreSettingsAsync(CalibreSettings settings)
+        public async Task SaveSettingsAsync(AppSettings settings)
         {
             try
             {
@@ -60,7 +60,7 @@ namespace BookChat.Services
                 };
 
                 var json = JsonSerializer.Serialize(settings, options);
-                await File.WriteAllTextAsync(_calibreSettingsFile, json);
+                await File.WriteAllTextAsync(_settingsFile, json);
             }
             catch (Exception)
             {

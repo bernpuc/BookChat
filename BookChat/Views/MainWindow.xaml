@@ -8,8 +8,9 @@
         prism:ViewModelLocator.AutoWireViewModel="True"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}"
-        Height="600" Width="900"
-        MinHeight="400" MinWidth="600">
+        Height="800" Width="1100"
+        MinHeight="400" MinWidth="600"
+        Icon="/Resources/favicon.ico">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
@@ -93,10 +94,10 @@
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="150"/>
                                 <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="*" MinWidth="200"/>
-                                <DataGridTextColumn Header="Series" Binding="{Binding Series}" Width="120"/>
                                 <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="70"/>
                                 <DataGridTextColumn Header="Size" Binding="{Binding FileSize}" SortMemberPath="FileSizeInBytes" Width="80"/>
                                 <DataGridTextColumn Header="Language" Binding="{Binding Language}" Width="80"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
                                 <DataGridTemplateColumn Header="Action" Width="100">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -303,16 +304,19 @@
                     <StackPanel Margin="20">
 
                         <!-- App Title -->
-                        <TextBlock Text="BookChat" FontSize="32" FontWeight="Bold" Foreground="#FF2C3E50" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Image Source="/Resources/favicon.ico" Width="40" Height="40" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="BookChat" FontSize="32" FontWeight="Bold" Foreground="#FF2C3E50" VerticalAlignment="Center"/>
+                        </StackPanel>
                         <TextBlock Text="IRC E-Book Downloader" FontSize="16" Foreground="#FF7F8C8D" Margin="0,0,0,20"/>
 
                         <!-- Version Info -->
                         <Border Background="#FFF8F9FA" Padding="15" Margin="0,0,0,20" CornerRadius="5">
                             <StackPanel>
                                 <TextBlock Text="Version Information" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                                <TextBlock Text="Version: 1.0.0" FontSize="12" Margin="0,0,0,5"/>
+                                <TextBlock Text="Version: 1.1.0" FontSize="12" Margin="0,0,0,5"/>
                                 <TextBlock Text=".NET 9.0" FontSize="12" Margin="0,0,0,5"/>
-                                <TextBlock Text="Build Date: December 2025" FontSize="12"/>
+                                <TextBlock Text="Build Date: December 31, 2025" FontSize="12"/>
                             </StackPanel>
                         </Border>
 

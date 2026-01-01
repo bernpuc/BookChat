@@ -9,13 +9,13 @@ namespace BookChat.Services.Interfaces
     public interface ISettingsService
     {
         /// <summary>
-        /// Loads Calibre settings from storage
+        /// Loads application settings from storage
         /// </summary>
-        Task<CalibreSettings?> LoadCalibreSettingsAsync();
+        Task<AppSettings?> LoadSettingsAsync();
 
         /// <summary>
-        /// Saves Calibre settings to storage
+        /// Saves application settings to storage
         /// </summary>
-        Task SaveCalibreSettingsAsync(CalibreSettings settings);
+        Task SaveSettingsAsync(AppSettings settings);
     }
 }

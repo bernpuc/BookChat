@@ -1,4 +1,6 @@
 using System;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace BookChat.Models
 {
@@ -6,8 +8,12 @@ namespace BookChat.Models
     /// Represents a single book search result from SearchBot
     /// Example: !Ashurbanipal mM43v4QB0mLu6KmIh4zXhQ - Isaac Asimov - Foundation [eng] - Foundation (EPUB) 247.7 KB - [Science Fiction]
     /// </summary>
-    public class SearchResult
+    public class SearchResult : INotifyPropertyChanged
     {
+        private string _status = "Ready";
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
         public string BotName { get; set; } = string.Empty;
         public string FileHash { get; set; } = string.Empty;
         public string Author { get; set; } = string.Empty;
@@ -18,6 +24,27 @@ namespace BookChat.Models
         public string FileSize { get; set; } = string.Empty;
         public string Tags { get; set; } = string.Empty;
         public string RawLine { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Download status: Ready, Requesting, Downloading, Complete, Failed
+        /// </summary>
+        public string Status
+        {
+            get => _status;
+            set
+            {
+                if (_status != value)
+                {
+                    _status = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Expected filename for matching with DCC downloads
+        /// </summary>
+        public string FileName { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets the command to send to download this book
@@ -71,6 +98,11 @@ namespace BookChat.Models
         public override string ToString()
         {
             return DisplayText;
+        }
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
 }

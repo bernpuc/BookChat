@@ -24,13 +24,15 @@ A modern WPF desktop application for searching and downloading e-books from IRC 
 
 ### ✅ User Experience
 - **Tab-Based Interface**:
-  - **Find Books**: Search interface and results grid
+  - **Find Books**: Search interface and results grid with live status tracking
   - **Settings**: IRC connection, Calibre integration, and chat messages
   - **About**: Version info, features, and system details
-- **Auto-Connect**: Connects to IRC on startup for immediate use
+- **Download Status Tracking**: Visual status column showing Ready/Requesting/Downloading/Complete/Failed for each book
+- **Auto-Connect**: Connects to IRC on startup using saved settings
 - **Connection Validation**: Modal dialogs guide users if not connected
+- **Smart Search Feedback**: Clear notifications when searches return no results
 - **Real-Time Updates**: Live download progress, search status, and IRC chat
-- **Persistent Settings**: All configurations saved to `%APPDATA%\BookChat\`
+- **Persistent Settings**: All IRC and Calibre configurations saved to `%APPDATA%\BookChat\`
 
 ## Quick Start
 
@@ -69,10 +71,10 @@ dotnet run
 ## Configuration
 
 ### IRC Settings
-Located in the **Settings** tab:
+Located in the **Settings** tab (all settings persist between sessions):
 - **Server**: irc.irchighway.net (default)
 - **Port**: 6667 (default)
-- **Nickname**: ircuser (customizable)
+- **Nickname**: ircuser (customizable - saved for next launch)
 - **Channel**: #ebooks (default)
 
 ### Calibre Settings
@@ -86,7 +88,7 @@ Located in the **Settings** tab:
 ### Storage Locations
 - **Book Downloads**: `%USERPROFILE%\Documents\BookChat\Downloads`
 - **Search Results (Temp)**: `%TEMP%\BookChat\SearchResults` (auto-cleaned on reboot)
-- **Settings File**: `%APPDATA%\BookChat\calibre-settings.json`
+- **Settings File**: `%APPDATA%\BookChat\app-settings.json`
 
 ## Project Structure
 
@@ -95,8 +97,8 @@ BookChat/
 ├── Models/
 │   ├── FileOffer.cs              - DCC file offer model
 │   ├── DownloadProgress.cs       - Download progress tracking
-│   ├── SearchResult.cs           - Search result model
-│   └── CalibreSettings.cs        - Settings persistence model
+│   ├── SearchResult.cs           - Search result model with status tracking
+│   └── AppSettings.cs            - Settings persistence model (IRC + Calibre)
 ├── Services/
 │   ├── Interfaces/
 │   │   ├── IDccService.cs        - DCC service interface
@@ -133,9 +135,40 @@ BookChat/
 
 1. **Search Request**: User enters author/title → App sends `@search` to SearchBot
 2. **Results Download**: SearchBot sends zip file via DCC → Auto-accepted to temp folder
-3. **Parsing**: Zip extracted → Results parsed → Displayed in grid with ranking
-4. **Book Download**: User clicks Download → App sends request → Bot sends book
-5. **Calibre Import**: (If enabled) Book automatically added to Calibre library
+3. **Parsing**: Zip extracted → Results parsed → Displayed in grid with ranking (Status: "Ready")
+4. **Book Download**: User clicks Download → Status changes to "Requesting"
+5. **DCC Transfer**: Bot sends file → Status changes to "Downloading"
+6. **Completion**: Download finishes → Status changes to "Complete"
+7. **Calibre Import**: (If enabled) Book automatically added to Calibre library
+
+### Download Status Tracking
+
+Each search result includes a **Status** column that provides real-time feedback:
+
+- **Ready**: Book is available to download
+- **Requesting**: Download request sent to bot, waiting for DCC offer
+- **Downloading**: File transfer in progress via DCC
+- **Complete**: Download finished successfully (book saved to Downloads folder)
+- **Failed**: Download encountered an error
+- **Cancelled**: Download was cancelled
+
+**Status Tracking Features:**
+- Automatic filename matching between search results and DCC downloads
+- Live UI updates using `INotifyPropertyChanged`
+- Status persists until new search is performed
+- Clear visual indication of which books have been downloaded
+- Prevents duplicate download requests while download is in progress
+
+### Search Result Handling
+
+**When search returns results:**
+- SearchStatus shows: "Search found X matches"
+- Results grid populates with books (Status: "Ready")
+
+**When search returns no results:**
+- SearchStatus shows: "No results found - try different search terms"
+- Helpful suggestions displayed in chat messages
+- Empty results grid makes it clear no matches were found
 
 ### DCC Protocol Implementation
 
@@ -168,10 +201,11 @@ BookChat/
 
 All settings automatically saved on change to:
 ```
-%APPDATA%\BookChat\calibre-settings.json
+%APPDATA%\BookChat\app-settings.json
 ```
 
 Includes:
+- IRC connection settings (server, port, nickname, channel)
 - Calibre library path and server URL
 - Auto-import preferences and duplicate handling
 - Username and password (stored locally, not encrypted)
@@ -228,10 +262,18 @@ dotnet run --project BookChat --verbosity detailed
 
 ## Version History
 
+- **v1.1.0** (December 2025) - Enhanced Status Tracking and Settings
+  - Download status tracking with visual feedback (Ready/Requesting/Downloading/Complete/Failed)
+  - IRC connection settings persistence (server, port, nickname, channel)
+  - Improved search feedback for "no results" scenarios
+  - Removed Series column (rarely populated)
+  - Fixed auto-connect to use saved settings
+  - All settings now in unified `app-settings.json` file
+
 - **v1.0.0** (December 2025) - Full release with Calibre integration
   - Tab-based interface (Find Books, Settings, About)
   - Automatic Calibre library imports
-  - Settings persistence
+  - Settings persistence for Calibre
   - Auto-connect on startup
   - Smart temporary file management
 
@@ -259,6 +301,6 @@ Developed with assistance from Claude (Anthropic)
 
 ---
 
-**Version:** 1.0.0
-**Last Updated:** December 30, 2025
+**Version:** 1.1.0
+**Last Updated:** December 31, 2025
 **Status:** Production Ready ✅

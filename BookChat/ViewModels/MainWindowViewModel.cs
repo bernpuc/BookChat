@@ -43,6 +43,7 @@ namespace BookChat.ViewModels
         private string _calibreContentServerUrl = "http://localhost:8080";
         private string _calibreUsername = string.Empty;
         private string _calibrePassword = string.Empty;
+        private SearchResult? _currentDownloadingBook; // Track which book is currently being downloaded
 
         public ObservableCollection<string> Messages { get; } = new();
         public ObservableCollection<FileOffer> FileOffers { get; } = new();
@@ -205,13 +206,19 @@ namespace BookChat.ViewModels
             Directory.CreateDirectory(_downloadDirectory);
             Directory.CreateDirectory(_searchResultsTempDirectory);
 
-            // Load saved settings
-            _ = LoadSettingsAsync();
-
             // Subscribe to property changes to auto-save settings
-            PropertyChanged += OnCalibreSettingChanged;
+            PropertyChanged += OnSettingChanged;
 
-            // Auto-connect on startup
+            // Initialize async (load settings then auto-connect)
+            _ = InitializeAsync();
+        }
+
+        private async System.Threading.Tasks.Task InitializeAsync()
+        {
+            // Load saved settings first
+            await LoadSettingsAsync();
+
+            // Auto-connect on startup using loaded settings
             AddMessage($"Auto-connecting to {Server} {Channel}...");
             Connect();
         }
@@ -478,21 +485,27 @@ namespace BookChat.ViewModels
                 // Enable debugging to see all IRC protocol messages
                 var rawMsg = e.Data.RawMessage;
 
-                // Parse search status messages
-                if (rawMsg.Contains("SearchBot", StringComparison.OrdinalIgnoreCase))
+                // Parse search status messages - check for Search bot or SearchBot messages
+                if (rawMsg.Contains("SearchBot", StringComparison.OrdinalIgnoreCase) ||
+                    rawMsg.Contains(":Search!", StringComparison.OrdinalIgnoreCase))
                 {
                     Application.Current.Dispatcher.Invoke(() =>
                     {
                         AddMessage($"[RAW] {rawMsg}");
 
+                        // Check for "no matches" first (most specific)
+                        if (rawMsg.Contains("no matches", StringComparison.OrdinalIgnoreCase) ||
+                            (rawMsg.Contains("Sorry", StringComparison.OrdinalIgnoreCase) &&
+                             rawMsg.Contains("search", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            SearchStatus = "No results found - try different search terms";
+                            AddMessage($"*** No results found for your search");
+                            AddMessage($"*** Try using different keywords or check spelling");
+                        }
                         // Extract search status messages
-                        if (rawMsg.Contains("has been accepted", StringComparison.OrdinalIgnoreCase))
+                        else if (rawMsg.Contains("has been accepted", StringComparison.OrdinalIgnoreCase))
                         {
                             SearchStatus = "Search request accepted, waiting for results...";
-                        }
-                        else if (rawMsg.Contains("returned no matches", StringComparison.OrdinalIgnoreCase))
-                        {
-                            SearchStatus = "Search returned no matches";
                         }
                         else if (rawMsg.Contains("found", StringComparison.OrdinalIgnoreCase) && rawMsg.Contains("match", StringComparison.OrdinalIgnoreCase))
                         {
@@ -635,6 +648,12 @@ namespace BookChat.ViewModels
 
             try
             {
+                // Store reference to track status updates
+                _currentDownloadingBook = result;
+
+                // Update status to Requesting
+                result.Status = "Requesting";
+
                 // Send the download command (e.g., "!Ashurbanipal mM43v4QB0mLu6KmIh4zXhQ")
                 var downloadCommand = result.DownloadCommand;
                 _client.SendMessage(SendType.Message, Channel, downloadCommand);
@@ -648,6 +667,8 @@ namespace BookChat.ViewModels
             }
             catch (Exception ex)
             {
+                result.Status = "Failed";
+                _currentDownloadingBook = null;
                 AddMessage($"*** ERROR requesting book: {ex.Message}");
                 SearchStatus = "Download request failed";
             }
@@ -721,6 +742,15 @@ namespace BookChat.ViewModels
                 // Ensure target directory exists
                 Directory.CreateDirectory(targetDirectory);
 
+                // Update status to Downloading
+                if (!isSearchResults && _currentDownloadingBook != null)
+                {
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        _currentDownloadingBook.Status = "Downloading";
+                    });
+                }
+
                 await _dccService.AcceptFileAsync(fileOffer, targetDirectory);
             }
             catch (Exception ex)
@@ -728,6 +758,10 @@ namespace BookChat.ViewModels
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     AddMessage($"*** ERROR downloading file: {ex.Message}");
+                    if (_currentDownloadingBook != null)
+                    {
+                        _currentDownloadingBook.Status = "Failed";
+                    }
                 });
             }
         }
@@ -784,21 +818,41 @@ namespace BookChat.ViewModels
                     {
                         _ = ProcessSearchResultsAsync(progress.FileOffer.LocalFilePath!);
                     }
-                    else if (AutoImportToCalibre && !string.IsNullOrWhiteSpace(CalibreLibraryPath))
+                    else
                     {
-                        // Auto-import to Calibre (only for actual books, not search results)
-                        _ = ImportToCalibreAsync(progress.FileOffer.LocalFilePath!, progress.FileOffer.FileName);
+                        // Update status to Complete for books
+                        if (_currentDownloadingBook != null)
+                        {
+                            _currentDownloadingBook.Status = "Complete";
+                            _currentDownloadingBook = null; // Clear reference
+                        }
+
+                        if (AutoImportToCalibre && !string.IsNullOrWhiteSpace(CalibreLibraryPath))
+                        {
+                            // Auto-import to Calibre (only for actual books, not search results)
+                            _ = ImportToCalibreAsync(progress.FileOffer.LocalFilePath!, progress.FileOffer.FileName);
+                        }
                     }
                 }
                 else if (progress.Status == DownloadStatus.Failed)
                 {
                     AddMessage($"*** DOWNLOAD FAILED: {progress.FileOffer.FileName} - {progress.ErrorMessage}");
                     SearchStatus = $"Download failed: {progress.ErrorMessage}";
+                    if (_currentDownloadingBook != null)
+                    {
+                        _currentDownloadingBook.Status = "Failed";
+                        _currentDownloadingBook = null; // Clear reference
+                    }
                 }
                 else if (progress.Status == DownloadStatus.Cancelled)
                 {
                     AddMessage($"*** DOWNLOAD CANCELLED: {progress.FileOffer.FileName}");
                     SearchStatus = "Download cancelled";
+                    if (_currentDownloadingBook != null)
+                    {
+                        _currentDownloadingBook.Status = "Cancelled";
+                        _currentDownloadingBook = null; // Clear reference
+                    }
                 }
 
                 // Remove from active downloads
@@ -890,12 +944,19 @@ namespace BookChat.ViewModels
         {
             try
             {
-                var settings = await _settingsService.LoadCalibreSettingsAsync();
+                var settings = await _settingsService.LoadSettingsAsync();
                 if (settings != null)
                 {
                     // Temporarily unsubscribe to avoid triggering saves during load
-                    PropertyChanged -= OnCalibreSettingChanged;
+                    PropertyChanged -= OnSettingChanged;
 
+                    // Load IRC settings
+                    Server = settings.IrcServer;
+                    Port = settings.IrcPort;
+                    Nickname = settings.IrcNickname;
+                    Channel = settings.IrcChannel;
+
+                    // Load Calibre settings
                     CalibreLibraryPath = settings.LibraryPath;
                     AutoImportToCalibre = settings.AutoImport;
                     CalibreDuplicateHandling = settings.DuplicateHandling;
@@ -904,21 +965,22 @@ namespace BookChat.ViewModels
                     CalibrePassword = settings.Password;
 
                     // Re-subscribe
-                    PropertyChanged += OnCalibreSettingChanged;
+                    PropertyChanged += OnSettingChanged;
 
-                    AddMessage("*** Calibre settings loaded");
+                    AddMessage("*** Settings loaded");
                 }
             }
             catch (Exception ex)
             {
-                AddMessage($"*** Failed to load Calibre settings: {ex.Message}");
+                AddMessage($"*** Failed to load settings: {ex.Message}");
             }
         }
 
-        private async void OnCalibreSettingChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        private async void OnSettingChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
-            // Save settings when any Calibre property changes
-            if (e.PropertyName is "CalibreLibraryPath" or "AutoImportToCalibre" or "CalibreDuplicateHandling"
+            // Save settings when any IRC or Calibre property changes
+            if (e.PropertyName is "Server" or "Port" or "Nickname" or "Channel"
+                or "CalibreLibraryPath" or "AutoImportToCalibre" or "CalibreDuplicateHandling"
                 or "CalibreContentServerUrl" or "CalibreUsername" or "CalibrePassword")
             {
                 await SaveSettingsAsync();
@@ -929,8 +991,15 @@ namespace BookChat.ViewModels
         {
             try
             {
-                var settings = new CalibreSettings
+                var settings = new AppSettings
                 {
+                    // IRC settings
+                    IrcServer = Server,
+                    IrcPort = Port,
+                    IrcNickname = Nickname,
+                    IrcChannel = Channel,
+
+                    // Calibre settings
                     LibraryPath = CalibreLibraryPath,
                     AutoImport = AutoImportToCalibre,
                     DuplicateHandling = CalibreDuplicateHandling,
@@ -939,11 +1008,60 @@ namespace BookChat.ViewModels
                     Password = CalibrePassword
                 };
 
-                await _settingsService.SaveCalibreSettingsAsync(settings);
+                await _settingsService.SaveSettingsAsync(settings);
             }
             catch (Exception)
             {
                 // Silently fail - settings won't be persisted but app continues
+            }
+        }
+
+        /// <summary>
+        /// Updates the status of a SearchResult by matching filename
+        /// </summary>
+        private void UpdateSearchResultStatus(string filename, string status)
+        {
+            if (string.IsNullOrWhiteSpace(filename))
+                return;
+
+            // Try to find matching SearchResult by filename (case-insensitive, partial match)
+            var result = SearchResults.FirstOrDefault(r =>
+                !string.IsNullOrWhiteSpace(r.FileName) &&
+                (r.FileName.Equals(filename, StringComparison.OrdinalIgnoreCase) ||
+                 filename.Contains(r.FileName, StringComparison.OrdinalIgnoreCase) ||
+                 r.FileName.Contains(filename, StringComparison.OrdinalIgnoreCase)));
+
+            if (result != null)
+            {
+                result.Status = status;
+            }
+        }
+
+        /// <summary>
+        /// Cleanup resources when application is closing
+        /// </summary>
+        public void Cleanup()
+        {
+            try
+            {
+                // Disconnect from IRC gracefully
+                if (_client != null && _client.IsConnected)
+                {
+                    Disconnect();
+                }
+
+                // Give the disconnect a moment to complete
+                System.Threading.Thread.Sleep(500);
+
+                // Abort listener thread if still running
+                if (_listenerThread != null && _listenerThread.IsAlive)
+                {
+                    _listenerThread.Join(1000); // Wait up to 1 second for graceful shutdown
+                }
+            }
+            catch (Exception)
+            {
+                // Suppress errors during shutdown
             }
         }
 

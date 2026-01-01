@@ -18,6 +18,16 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Loaded += MainWindow_Loaded;
+        Closing += MainWindow_Closing;
+    }
+
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        // Disconnect from IRC when window is closing
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.Cleanup();
+        }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
