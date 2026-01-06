@@ -422,6 +422,18 @@ namespace BookChat.ViewModels
         {
             try
             {
+                // Filter out normal disconnect messages that aren't actually errors
+                if (e.ErrorMessage.Contains("Closing link", StringComparison.OrdinalIgnoreCase) ||
+                    e.ErrorMessage.Contains("[Quit:", StringComparison.OrdinalIgnoreCase))
+                {
+                    // These are normal IRC server messages when disconnecting - not errors
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        AddMessage($"*** {e.ErrorMessage}");
+                    });
+                    return;
+                }
+
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     AddMessage($"*** ERROR: {e.ErrorMessage}");
@@ -545,6 +557,12 @@ namespace BookChat.ViewModels
                         _client.Disconnect();
                     }
 
+                    _client = null;
+                }
+                catch (PlatformNotSupportedException ex) when (ex.Message.Contains("Thread abort"))
+                {
+                    // Thread abort is not supported in .NET Core/.NET 9 - ignore this error
+                    // The SmartIrc4net library throws this but disconnect still works
                     _client = null;
                 }
                 catch (Exception ex)
