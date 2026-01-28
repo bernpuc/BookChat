@@ -1076,6 +1076,17 @@ namespace BookChat.ViewModels
                 {
                     _listenerThread.Join(1000); // Wait up to 1 second for graceful shutdown
                 }
+
+                // Explicitly nullify the client to release native resources
+                _client = null;
+                _listenerThread = null;
+
+                // Force garbage collection to clean up SmartIrc4net native resources
+                // before the app domain unloads. This prevents "Dll was not found"
+                // errors during C++ runtime cleanup.
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
             }
             catch (Exception)
             {
