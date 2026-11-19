@@ -414,6 +414,21 @@ Built per this plan, in this repo, on `BookChat.sln`:
   multiplication (not just clamping the final delay, which was already too late), plus a
   defense-in-depth catch around `Task.Delay` so this class of bug can't silently kill the loop
   again even if something else trips it. Rebuilt, redeployed, verified it reconnects cleanly.
+- **Switched from always-connected to connect-on-demand (2026-11-19)**: originally
+  `IrcHostedService` connected at container startup and stayed connected for the container's whole
+  life, matching §2.1's framing of a long-lived server-owned connection. Reconsidered after being
+  asked directly about IRC etiquette — an idle presence on IRCHighway's #ebooks for days between
+  actual use, and the reconnect-flapping risk an always-on connection carries during a rough patch
+  (exactly what the overflow bug above did), outweigh the convenience of staying pre-connected.
+  Added `BookChatSession.EnsureConnectedAsync` (connects, or joins an in-progress connect, and
+  awaits up to 15s for `Connected`) called from `SearchAsync`/`DownloadAsync`, and
+  `IrcHostedService.RunIdleMonitorAsync` (polls every 30s, disconnects after
+  `BookChat__IdleDisconnectMinutes` — default 10 — of no job activity). `IrcHostedService.StartAsync`
+  no longer calls `session.Connect()` at all. Confirmed via `docker logs` that a fresh container no
+  longer shows a "Connecting to irc.irchighway.net" line at startup. The connect-on-search /
+  disconnect-after-idle cycle itself wasn't re-verified with a live click-through this round (a
+  built-in-browser site-permission block interrupted that mid-session) — worth confirming with
+  normal use.
 
 **Not yet done** (left for a follow-up pass, deliberately out of scope for this first cut):
 - The original `BookChat` (WPF) project is untouched — it still builds and runs standalone; no

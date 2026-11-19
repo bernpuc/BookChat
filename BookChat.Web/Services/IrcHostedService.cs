@@ -1,4 +1,5 @@
 using BookChat.Core;
+using BookChat.Core.Irc;
 using BookChat.Core.Models;
 using BookChat.Web.Data;
 using Microsoft.EntityFrameworkCore;
@@ -6,9 +7,14 @@ using Microsoft.EntityFrameworkCore;
 namespace BookChat.Web.Services;
 
 /// <summary>
-/// Owns the single, shared <see cref="BookChatSession"/> for the whole household — starts it at
-/// app startup and keeps it connected (via the session's own reconnect-with-backoff) for as long
-/// as the container runs, rather than tying connection liveness to any one browser tab.
+/// Owns the single, shared <see cref="BookChatSession"/> for the whole household and applies this
+/// deployment's connection-liveness *policy*: connect on demand (the first search/download brings
+/// it up, via <see cref="BookChatSession.EnsureConnectedAsync"/>), then disconnect again after
+/// <see cref="IdleDisconnectAfter"/> of no activity with nothing in flight. Deliberately not
+/// "always connected" — holding an idle presence on IRCHighway's #ebooks for days between uses,
+/// and more importantly the reconnect-flapping an always-on connection risks during a rough
+/// network patch (see the backoff-overflow bug this app already hit once), is worse citizenship
+/// than connecting only while actually in use.
 /// Persists completed/failed jobs to SQLite as they finish, so download history survives restarts
 /// (the gap flagged in WEB_PORT_PLAN.md §1.2 for BookChatAndroid).
 /// </summary>
@@ -19,6 +25,7 @@ public class IrcHostedService(
     ILogger<IrcHostedService> logger) : IHostedService
 {
     private readonly HashSet<Guid> _persistedJobIds = [];
+    private CancellationTokenSource? _idleMonitorCts;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -48,12 +55,48 @@ public class IrcHostedService(
         session.JobsChanged += () => _ = PersistCompletedJobsAsync();
         session.MessageLogged += message => logger.LogInformation("{Message}", message);
 
-        session.Connect();
+        // No session.Connect() here — connecting is now on-demand (see class remarks).
+
+        var idleMinutes = configuration.GetValue("BookChat:IdleDisconnectMinutes", 10);
+        _idleMonitorCts = new CancellationTokenSource();
+        _ = RunIdleMonitorAsync(TimeSpan.FromMinutes(idleMinutes), _idleMonitorCts.Token);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _idleMonitorCts?.Cancel();
         await session.DisconnectAsync();
+    }
+
+    /// <summary>
+    /// Polls every 30s and disconnects once the connection has been idle (no jobs in flight, no
+    /// search/download requested) for longer than <paramref name="idleTimeout"/>. A poll loop
+    /// rather than a single delayed timer because activity keeps resetting the clock
+    /// (<see cref="BookChatSession.LastActivityUtc"/>) and there's no single point to re-arm a
+    /// one-shot timer from without threading that through every call site that touches a job.
+    /// </summary>
+    private async Task RunIdleMonitorAsync(TimeSpan idleTimeout, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (session.ConnectionState != IrcConnectionState.Connected)
+                    continue;
+                if (session.HasActiveJobs)
+                    continue;
+                if (DateTimeOffset.UtcNow - session.LastActivityUtc < idleTimeout)
+                    continue;
+
+                logger.LogInformation("Disconnecting from IRC after {Minutes} minutes of inactivity", idleTimeout.TotalMinutes);
+                await session.DisconnectAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal on shutdown.
+        }
     }
 
     /// <summary>

@@ -7,6 +7,7 @@
 @using Microsoft.EntityFrameworkCore
 @inject BookChatSession Session
 @inject IDbContextFactory<BookChatDbContext> DbFactory
+@inject IConfiguration Configuration
 @implements IDisposable
 
 <PageTitle>BookChat</PageTitle>
@@ -27,9 +28,9 @@
                 <div class="bc-group-header">Book Search</div>
                 <div class="bc-search-row">
                     <label>Author:</label>
-                    <input @bind="_authorName" @bind:event="oninput" disabled="@(!IsConnected)" />
+                    <input @bind="_authorName" @bind:event="oninput" />
                     <label>Book Title:</label>
-                    <input @bind="_bookTitle" @bind:event="oninput" disabled="@(!IsConnected)"
+                    <input @bind="_bookTitle" @bind:event="oninput"
                            @onkeydown="@(e => { if (e.Key == "Enter") { _ = FetchBookAsync(); } })" />
                     <button class="bc-btn bc-btn-primary" disabled="@(!CanFetchBook)" @onclick="FetchBookAsync">Fetch</button>
                 </div>
@@ -110,6 +111,13 @@
                     <input @bind="_settings.IrcChannel" disabled="@IsConnected" style="flex:1" />
                 </div>
                 <div class="bc-status-line">Status: @Session.ConnectionState</div>
+                <p class="bc-hint">
+                    Connects automatically when you search or download, and disconnects again after
+                    @_idleDisconnectMinutes minutes with nothing happening — kept that way on
+                    purpose so this doesn't sit idling on IRCHighway's #ebooks for days between
+                    uses. The buttons above are for manual control (pre-connect, or force a
+                    disconnect) — you don't need them for normal use.
+                </p>
             </div>
 
             <div class="bc-group">
@@ -145,7 +153,10 @@
                     <li>IRC-based e-book searching and downloading</li>
                     <li>DCC file transfer protocol support</li>
                     <li>Real-time download progress tracking, shared across every connected browser</li>
-                    <li>One IRC identity, kept alive server-side independent of any browser tab</li>
+                    <li>One IRC identity, connected on demand and shared across every connected browser</li>
+                    <li>Connects only while actually searching/downloading, disconnects after a few
+                        minutes idle — respectful of the IRC channel rather than holding a
+                        permanent idle presence</li>
                 </ul>
                 <p><strong>Technologies:</strong> Blazor Server, .NET 9, EF Core + SQLite, a hand-rolled IRC/DCC core
                    (BookChat.Core) shared with the hosted service.</p>
@@ -165,14 +176,16 @@
     private List<SearchResult> _searchResults = [];
     private readonly List<string> _messages = [];
     private SettingsEntity _settings = new();
+    private int _idleDisconnectMinutes;
 
     private bool IsConnected => Session.ConnectionState == IrcConnectionState.Connected;
-    private bool CanFetchBook => IsConnected && (!string.IsNullOrWhiteSpace(_authorName) || !string.IsNullOrWhiteSpace(_bookTitle));
+    private bool CanFetchBook => !string.IsNullOrWhiteSpace(_authorName) || !string.IsNullOrWhiteSpace(_bookTitle);
 
     protected override async Task OnInitializedAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         _settings = await db.Settings.FindAsync(1) ?? new SettingsEntity();
+        _idleDisconnectMinutes = Configuration.GetValue("BookChat:IdleDisconnectMinutes", 10);
 
         Session.MessageLogged += OnMessageLogged;
         Session.ConnectionStateChanged += OnConnectionStateChanged;
@@ -220,14 +233,30 @@
     private async Task FetchBookAsync()
     {
         if (!CanFetchBook) return;
-        _searchStatus = "Sending search request...";
+        _searchStatus = IsConnected ? "Sending search request..." : "Connecting to IRC...";
         _searchResults = [];
-        await Session.SearchAsync(_authorName.Trim(), _bookTitle.Trim());
+        StateHasChanged();
+        try
+        {
+            await Session.SearchAsync(_authorName.Trim(), _bookTitle.Trim());
+        }
+        catch (InvalidOperationException ex)
+        {
+            _searchStatus = ex.Message;
+        }
     }
 
     private async Task DownloadBookAsync(SearchResult result)
     {
-        await Session.DownloadAsync(result);
+        try
+        {
+            await Session.DownloadAsync(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _searchStatus = ex.Message;
+            StateHasChanged();
+        }
     }
 
     private Task ConnectAsync()

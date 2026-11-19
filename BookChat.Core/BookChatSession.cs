@@ -38,10 +38,20 @@ public class BookChatSession : IAsyncDisposable
 
     public IrcConnectionState ConnectionState => _ircClient?.State ?? IrcConnectionState.Disconnected;
 
+    /// <summary>
+    /// Last time a search/download was requested or a job's state changed — what the idle-
+    /// disconnect policy (see <c>IrcHostedService.RunIdleMonitorAsync</c>) measures against.
+    /// </summary>
+    public DateTimeOffset LastActivityUtc { get; private set; } = DateTimeOffset.UtcNow;
+
     public IReadOnlyList<DownloadJob> Jobs
     {
         get { lock (_jobsLock) { return _jobs.ToList(); } }
     }
+
+    /// <summary>True while any job is still in flight — the idle monitor never disconnects while this holds.</summary>
+    public bool HasActiveJobs => Jobs.Any(j => j.State is DownloadJobState.Queued or DownloadJobState.RequestSent
+        or DownloadJobState.OfferReceived or DownloadJobState.Downloading or DownloadJobState.Importing);
 
     public BookChatSession(
         IDccReceiver dccReceiver,
@@ -91,8 +101,52 @@ public class BookChatSession : IAsyncDisposable
             await _ircClient.StopAsync();
     }
 
+    /// <summary>
+    /// Connects if not already connected (or joins an in-progress connect) and waits up to
+    /// <paramref name="timeout"/> for it to reach <see cref="IrcConnectionState.Connected"/>.
+    /// This is what makes the connection "on demand": nothing calls <see cref="Connect"/> at
+    /// startup any more (see <c>IrcHostedService</c>) — the first search or download is what
+    /// brings the connection up, and the idle monitor is what takes it back down. Respectful-use
+    /// motivation (not just resource use): an idle connection that's present for days is one
+    /// thing on IRCHighway's #ebooks, but a connection that's only up while actually in use is
+    /// strictly less to object to.
+    /// </summary>
+    public async Task<bool> EnsureConnectedAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        LastActivityUtc = DateTimeOffset.UtcNow;
+
+        if (ConnectionState == IrcConnectionState.Connected)
+            return true;
+
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Handler(IrcStateChange change)
+        {
+            if (change.State == IrcConnectionState.Connected)
+                tcs.TrySetResult(true);
+        }
+
+        ConnectionStateChanged += Handler;
+        try
+        {
+            if (ConnectionState == IrcConnectionState.Disconnected)
+                Connect();
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(timeout);
+            using var registration = cts.Token.Register(() => tcs.TrySetResult(false));
+            return await tcs.Task;
+        }
+        finally
+        {
+            ConnectionStateChanged -= Handler;
+        }
+    }
+
     public async Task<DownloadJob> SearchAsync(string author, string title)
     {
+        if (!await EnsureConnectedAsync(TimeSpan.FromSeconds(15)))
+            throw new InvalidOperationException("Could not connect to IRC — try again in a moment.");
+
         var query = $"@search {author} {title}".Trim();
         var job = new DownloadJob { Kind = "search", Query = query };
         EnqueueJob(job);
@@ -100,19 +154,22 @@ public class BookChatSession : IAsyncDisposable
         await RequireClient().SendMessageAsync(_ircSettings.Channel, query);
         job.State = DownloadJobState.RequestSent;
         Log($"[{_ircSettings.Nickname}] {query}");
-        JobsChanged?.Invoke();
+        NotifyJobsChanged();
         return job;
     }
 
     public async Task<DownloadJob> DownloadAsync(SearchResult result)
     {
+        if (!await EnsureConnectedAsync(TimeSpan.FromSeconds(15)))
+            throw new InvalidOperationException("Could not connect to IRC — try again in a moment.");
+
         var job = new DownloadJob { Kind = "download", Query = result.DownloadCommand, SearchResult = result };
         EnqueueJob(job);
 
         await RequireClient().SendMessageAsync(_ircSettings.Channel, result.DownloadCommand);
         job.State = DownloadJobState.RequestSent;
         Log($"[{_ircSettings.Nickname}] {result.DownloadCommand}");
-        JobsChanged?.Invoke();
+        NotifyJobsChanged();
         return job;
     }
 
@@ -122,6 +179,12 @@ public class BookChatSession : IAsyncDisposable
     private void EnqueueJob(DownloadJob job)
     {
         _jobs.Enqueue(job);
+        NotifyJobsChanged();
+    }
+
+    private void NotifyJobsChanged()
+    {
+        LastActivityUtc = DateTimeOffset.UtcNow;
         JobsChanged?.Invoke();
     }
 
@@ -147,7 +210,7 @@ public class BookChatSession : IAsyncDisposable
 
         job.Offer = offer;
         job.State = DownloadJobState.OfferReceived;
-        JobsChanged?.Invoke();
+        NotifyJobsChanged();
         Log($"*** FILE OFFER: {offer}");
 
         _ = isSearchResults ? ReceiveSearchResultsAsync(job, offer) : ReceiveBookAsync(job, offer);
@@ -158,7 +221,7 @@ public class BookChatSession : IAsyncDisposable
         try
         {
             job.State = DownloadJobState.Downloading;
-            JobsChanged?.Invoke();
+            NotifyJobsChanged();
 
             using var buffer = new MemoryStream();
             await _dccReceiver.ReceiveAsync(offer, buffer, progress: null);
@@ -181,7 +244,7 @@ public class BookChatSession : IAsyncDisposable
         }
         finally
         {
-            JobsChanged?.Invoke();
+            NotifyJobsChanged();
         }
     }
 
@@ -190,7 +253,7 @@ public class BookChatSession : IAsyncDisposable
         try
         {
             job.State = DownloadJobState.Downloading;
-            JobsChanged?.Invoke();
+            NotifyJobsChanged();
 
             var localPath = GetUniqueFilePath(Path.Combine(_downloadDirectory, BuildDestinationFileName(job, offer)));
             job.LocalFilePath = localPath;
@@ -198,7 +261,7 @@ public class BookChatSession : IAsyncDisposable
             var progress = new Progress<long>(bytes =>
             {
                 job.BytesDownloaded = bytes;
-                JobsChanged?.Invoke();
+                NotifyJobsChanged();
             });
 
             await using (var fileStream = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
@@ -209,7 +272,7 @@ public class BookChatSession : IAsyncDisposable
             if (_calibreSettings.AutoImport)
             {
                 job.State = DownloadJobState.Importing;
-                JobsChanged?.Invoke();
+                NotifyJobsChanged();
                 var imported = await _calibreImportService.AddBookToLibraryAsync(localPath, _calibreSettings);
                 if (!imported)
                     Log($"*** Calibre import failed: {_calibreImportService.LastError}");
@@ -227,7 +290,7 @@ public class BookChatSession : IAsyncDisposable
         }
         finally
         {
-            JobsChanged?.Invoke();
+            NotifyJobsChanged();
         }
     }
 
