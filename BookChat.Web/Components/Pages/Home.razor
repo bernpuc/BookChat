@@ -15,6 +15,7 @@
 <div class="bc-window">
 
     <div class="bc-tabs">
+        <img class="bc-logo" src="favicon.ico" alt="BookChat" />
         <button class="bc-tab @(_activeTab == "find" ? "active" : "")" @onclick='() => _activeTab = "find"'>Find Books</button>
         <button class="bc-tab @(_activeTab == "settings" ? "active" : "")" @onclick='() => _activeTab = "settings"'>Settings</button>
         <button class="bc-tab @(_activeTab == "about" ? "active" : "")" @onclick='() => _activeTab = "about"'>About</button>
@@ -42,30 +43,32 @@
 
             <div class="bc-group bc-grow">
                 <div class="bc-group-header">Search Results</div>
-                <table class="bc-table">
-                    <thead>
-                        <tr>
-                            <th>Author</th><th>Title</th><th>Format</th><th>Size</th><th>Language</th><th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var result in _searchResults)
-                        {
+                <div class="bc-scroll-area">
+                    <table class="bc-table">
+                        <thead>
                             <tr>
-                                <td>@result.Author</td>
-                                <td>@result.Title</td>
-                                <td>@result.Format</td>
-                                <td>@result.FileSize</td>
-                                <td>@result.Language</td>
-                                <td><button class="bc-btn bc-btn-success" @onclick="() => DownloadBookAsync(result)">Download</button></td>
+                                <th>Author</th><th>Title</th><th>Format</th><th>Size</th><th>Language</th><th></th>
                             </tr>
-                        }
-                        @if (_searchResults.Count == 0)
-                        {
-                            <tr><td colspan="6" class="bc-empty">No results yet — search above.</td></tr>
-                        }
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @foreach (var result in _searchResults)
+                            {
+                                <tr>
+                                    <td>@result.Author</td>
+                                    <td>@result.Title</td>
+                                    <td>@result.Format</td>
+                                    <td>@result.FileSize</td>
+                                    <td>@result.Language</td>
+                                    <td><button class="bc-btn bc-btn-success" @onclick="() => DownloadBookAsync(result)">Download</button></td>
+                                </tr>
+                            }
+                            @if (_searchResults.Count == 0)
+                            {
+                                <tr><td colspan="6" class="bc-empty">No results yet — search above.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <div class="bc-group">
@@ -239,11 +242,16 @@
         try
         {
             await Session.SearchAsync(_authorName.Trim(), _bookTitle.Trim());
+            // SearchAsync only returns once the request has actually been sent (it awaits the
+            // connection first) — update the status to match, rather than leaving whatever we set
+            // before the await (e.g. "Connecting to IRC...") stuck on screen until results arrive.
+            _searchStatus = "Search request sent — waiting for results...";
         }
         catch (InvalidOperationException ex)
         {
             _searchStatus = ex.Message;
         }
+        StateHasChanged();
     }
 
     private async Task DownloadBookAsync(SearchResult result)

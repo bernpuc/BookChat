@@ -425,10 +425,14 @@ Built per this plan, in this repo, on `BookChat.sln`:
   `IrcHostedService.RunIdleMonitorAsync` (polls every 30s, disconnects after
   `BookChat__IdleDisconnectMinutes` — default 10 — of no job activity). `IrcHostedService.StartAsync`
   no longer calls `session.Connect()` at all. Confirmed via `docker logs` that a fresh container no
-  longer shows a "Connecting to irc.irchighway.net" line at startup. The connect-on-search /
-  disconnect-after-idle cycle itself wasn't re-verified with a live click-through this round (a
-  built-in-browser site-permission block interrupted that mid-session) — worth confirming with
-  normal use.
+  longer shows a "Connecting to irc.irchighway.net" line at startup, and confirmed working by
+  actual use the same day.
+- **Stuck status-line bug found by that real use, fixed (2026-11-19)**: `Home.razor`'s
+  `FetchBookAsync` set the Find Books status line to "Connecting to IRC..." once, before awaiting
+  `Session.SearchAsync` (which now does the connect-on-demand work internally) — but never updated
+  it again afterward, so it sat on "Connecting to IRC..." even once connected and the search
+  request had actually been sent, until results eventually arrived. Fixed by updating the status
+  text again right after `SearchAsync` returns successfully.
 
 **Not yet done** (left for a follow-up pass, deliberately out of scope for this first cut):
 - The original `BookChat` (WPF) project is untouched — it still builds and runs standalone; no

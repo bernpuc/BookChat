@@ -7,8 +7,15 @@
 
 .bc-tabs {
     display: flex;
+    align-items: center;
     background: #2c3e50;
     padding: 0 8px;
+}
+
+.bc-logo {
+    width: 24px;
+    height: 24px;
+    margin-right: 10px;
 }
 
 .bc-tab {
@@ -46,6 +53,19 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-height: 0; /* without this a flex child won't shrink below its content size, so the
+                      inner scroll area never gets a constrained height to scroll within */
+}
+
+.bc-scroll-area {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.bc-scroll-area .bc-table thead th {
+    position: sticky;
+    top: 0;
+    background: white;
 }
 
 .bc-group-header {
