@@ -1,0 +1,266 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using BookChat.Core
+@using BookChat.Core.Irc
+@using BookChat.Core.Models
+@using BookChat.Web.Data
+@using Microsoft.EntityFrameworkCore
+@inject BookChatSession Session
+@inject IDbContextFactory<BookChatDbContext> DbFactory
+@implements IDisposable
+
+<PageTitle>BookChat</PageTitle>
+
+<div class="bc-window">
+
+    <div class="bc-tabs">
+        <button class="bc-tab @(_activeTab == "find" ? "active" : "")" @onclick='() => _activeTab = "find"'>Find Books</button>
+        <button class="bc-tab @(_activeTab == "settings" ? "active" : "")" @onclick='() => _activeTab = "settings"'>Settings</button>
+        <button class="bc-tab @(_activeTab == "about" ? "active" : "")" @onclick='() => _activeTab = "about"'>About</button>
+    </div>
+
+    <div class="bc-tab-content">
+
+        @if (_activeTab == "find")
+        {
+            <div class="bc-group">
+                <div class="bc-group-header">Book Search</div>
+                <div class="bc-search-row">
+                    <label>Author:</label>
+                    <input @bind="_authorName" @bind:event="oninput" disabled="@(!IsConnected)" />
+                    <label>Book Title:</label>
+                    <input @bind="_bookTitle" @bind:event="oninput" disabled="@(!IsConnected)"
+                           @onkeydown="@(e => { if (e.Key == "Enter") { _ = FetchBookAsync(); } })" />
+                    <button class="bc-btn bc-btn-primary" disabled="@(!CanFetchBook)" @onclick="FetchBookAsync">Fetch</button>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_searchStatus))
+                {
+                    <div class="bc-status-line">@_searchStatus</div>
+                }
+            </div>
+
+            <div class="bc-group bc-grow">
+                <div class="bc-group-header">Search Results</div>
+                <table class="bc-table">
+                    <thead>
+                        <tr>
+                            <th>Author</th><th>Title</th><th>Format</th><th>Size</th><th>Language</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var result in _searchResults)
+                        {
+                            <tr>
+                                <td>@result.Author</td>
+                                <td>@result.Title</td>
+                                <td>@result.Format</td>
+                                <td>@result.FileSize</td>
+                                <td>@result.Language</td>
+                                <td><button class="bc-btn bc-btn-success" @onclick="() => DownloadBookAsync(result)">Download</button></td>
+                            </tr>
+                        }
+                        @if (_searchResults.Count == 0)
+                        {
+                            <tr><td colspan="6" class="bc-empty">No results yet — search above.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="bc-group">
+                <div class="bc-group-header">Active Jobs</div>
+                <table class="bc-table">
+                    <thead><tr><th>Kind</th><th>Query</th><th>State</th><th>Progress</th></tr></thead>
+                    <tbody>
+                        @foreach (var job in Session.Jobs.OrderByDescending(j => j.CreatedAt).Take(10))
+                        {
+                            <tr>
+                                <td>@job.Kind</td>
+                                <td>@job.Query</td>
+                                <td>@job.State</td>
+                                <td>@(job.Offer != null ? $"{job.PercentComplete:0}%" : "")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (_activeTab == "settings")
+        {
+            <div class="bc-group">
+                <div class="bc-group-header">IRC Connection</div>
+                <div class="bc-settings-row">
+                    <label>Server:</label>
+                    <input @bind="_settings.IrcServer" disabled="@IsConnected" />
+                    <label>Port:</label>
+                    <input type="number" @bind="_settings.IrcPort" disabled="@IsConnected" style="width:5em" />
+                    <label>Nickname:</label>
+                    <input @bind="_settings.IrcNickname" disabled="@IsConnected" />
+                    @if (!IsConnected)
+                    {
+                        <button class="bc-btn bc-btn-primary" @onclick="ConnectAsync">Connect</button>
+                    }
+                    else
+                    {
+                        <button class="bc-btn bc-btn-danger" @onclick="DisconnectAsync">Disconnect</button>
+                    }
+                </div>
+                <div class="bc-settings-row">
+                    <label>Channel:</label>
+                    <input @bind="_settings.IrcChannel" disabled="@IsConnected" style="flex:1" />
+                </div>
+                <div class="bc-status-line">Status: @Session.ConnectionState</div>
+            </div>
+
+            <div class="bc-group">
+                <div class="bc-group-header">Calibre Delivery</div>
+                <p class="bc-hint">
+                    Completed downloads are written to this server's configured download directory
+                    (<code>BookChat__DownloadDirectory</code>), which on this deployment is Calibre's
+                    own intake watch folder — an external script picks files up from there and
+                    imports them into the library automatically. There's nothing to configure here:
+                    no direct calibredb/content-server integration is wired up in this deployment.
+                </p>
+                <button class="bc-btn bc-btn-primary" @onclick="SaveSettingsAsync">Save Settings</button>
+            </div>
+
+            <div class="bc-group bc-grow">
+                <div class="bc-group-header">IRC Chat Messages</div>
+                <div class="bc-log">
+                    @foreach (var line in _messages)
+                    {
+                        <div>@line</div>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="bc-group">
+                <div class="bc-group-header">BookChat — IRC E-Book Downloader (Web)</div>
+                <p>A Blazor Server port of the BookChat WPF app, hosted as a background service so
+                   searching/downloading no longer depends on a desktop being powered on.</p>
+                <p><strong>Key features:</strong></p>
+                <ul>
+                    <li>IRC-based e-book searching and downloading</li>
+                    <li>DCC file transfer protocol support</li>
+                    <li>Real-time download progress tracking, shared across every connected browser</li>
+                    <li>One IRC identity, kept alive server-side independent of any browser tab</li>
+                </ul>
+                <p><strong>Technologies:</strong> Blazor Server, .NET 9, EF Core + SQLite, a hand-rolled IRC/DCC core
+                   (BookChat.Core) shared with the hosted service.</p>
+            </div>
+        }
+    </div>
+
+    <div class="bc-statusbar">@_statusMessage</div>
+</div>
+
+@code {
+    private string _activeTab = "find";
+    private string _authorName = "";
+    private string _bookTitle = "";
+    private string _searchStatus = "";
+    private string _statusMessage = "Ready";
+    private List<SearchResult> _searchResults = [];
+    private readonly List<string> _messages = [];
+    private SettingsEntity _settings = new();
+
+    private bool IsConnected => Session.ConnectionState == IrcConnectionState.Connected;
+    private bool CanFetchBook => IsConnected && (!string.IsNullOrWhiteSpace(_authorName) || !string.IsNullOrWhiteSpace(_bookTitle));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _settings = await db.Settings.FindAsync(1) ?? new SettingsEntity();
+
+        Session.MessageLogged += OnMessageLogged;
+        Session.ConnectionStateChanged += OnConnectionStateChanged;
+        Session.JobsChanged += OnJobsChanged;
+        Session.SearchResultsReady += OnSearchResultsReady;
+    }
+
+    private void OnMessageLogged(string message)
+    {
+        InvokeAsync(() =>
+        {
+            _messages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+            while (_messages.Count > 500) _messages.RemoveAt(0);
+            StateHasChanged();
+        });
+    }
+
+    private void OnConnectionStateChanged(IrcStateChange change)
+    {
+        InvokeAsync(() =>
+        {
+            _statusMessage = change.State switch
+            {
+                IrcConnectionState.Connected => $"Connected to {_settings.IrcChannel}",
+                IrcConnectionState.Connecting when change.Attempt > 0 => $"Reconnecting (attempt {change.Attempt})...",
+                IrcConnectionState.Connecting => "Connecting...",
+                _ => "Disconnected"
+            };
+            StateHasChanged();
+        });
+    }
+
+    private void OnJobsChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnSearchResultsReady(DownloadJob job, List<SearchResult> results)
+    {
+        InvokeAsync(() =>
+        {
+            _searchResults = results;
+            _searchStatus = $"Search found {results.Count} matches";
+            StateHasChanged();
+        });
+    }
+
+    private async Task FetchBookAsync()
+    {
+        if (!CanFetchBook) return;
+        _searchStatus = "Sending search request...";
+        _searchResults = [];
+        await Session.SearchAsync(_authorName.Trim(), _bookTitle.Trim());
+    }
+
+    private async Task DownloadBookAsync(SearchResult result)
+    {
+        await Session.DownloadAsync(result);
+    }
+
+    private Task ConnectAsync()
+    {
+        Session.Connect();
+        return Task.CompletedTask;
+    }
+
+    private Task DisconnectAsync() => Session.DisconnectAsync();
+
+    private async Task SaveSettingsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Database.EnsureCreatedAsync();
+        var existing = await db.Settings.FindAsync(1);
+        if (existing == null)
+        {
+            _settings.Id = 1;
+            db.Settings.Add(_settings);
+        }
+        else
+        {
+            db.Entry(existing).CurrentValues.SetValues(_settings);
+        }
+        await db.SaveChangesAsync();
+        _statusMessage = "Settings saved. Reconnect to apply IRC changes.";
+    }
+
+    public void Dispose()
+    {
+        Session.MessageLogged -= OnMessageLogged;
+        Session.ConnectionStateChanged -= OnConnectionStateChanged;
+        Session.JobsChanged -= OnJobsChanged;
+        Session.SearchResultsReady -= OnSearchResultsReady;
+    }
+}
