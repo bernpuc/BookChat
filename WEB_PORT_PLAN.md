@@ -402,6 +402,18 @@ Built per this plan, in this repo, on `BookChat.sln`:
   "no such column" on installs that never had them. Verified against the real deployment, not just
   a build — clicked Save Settings twice in the running app (insert path, then update path), both
   succeeded.
+- **Reconnect-loop overflow bug found and fixed (2026-11-19)**: this directly undercut the whole
+  §5 item 1 bet (replacing SmartIrc4net's no-reconnect behavior with a real reconnect-with-backoff
+  loop) — a rough network patch pushed the retry counter high enough that
+  `InitialBackoffMs * 2^(attempt-1)` in `IrcCoreClient.ConnectLoopAsync` overflowed `int32`, went
+  negative, and made `Task.Delay` throw uncaught — silently killing the entire reconnect loop.
+  Observed in production: IRC stayed disconnected for **over 2 hours**, zero further reconnect
+  attempts logged, only recovering because the container happened to restart for an unrelated fix.
+  Found by reading the full `docker logs -t bookchat-web` history after being asked whether the
+  connection had had any trouble staying up. Fixed by capping the exponent before the
+  multiplication (not just clamping the final delay, which was already too late), plus a
+  defense-in-depth catch around `Task.Delay` so this class of bug can't silently kill the loop
+  again even if something else trips it. Rebuilt, redeployed, verified it reconnects cleanly.
 
 **Not yet done** (left for a follow-up pass, deliberately out of scope for this first cut):
 - The original `BookChat` (WPF) project is untouched — it still builds and runs standalone; no

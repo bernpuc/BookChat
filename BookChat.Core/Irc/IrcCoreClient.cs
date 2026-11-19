@@ -85,8 +85,25 @@ public sealed class IrcCoreClient : IAsyncDisposable
             if (ct.IsCancellationRequested)
                 break;
 
-            var delay = Math.Min(InitialBackoffMs * (int)Math.Pow(2, Math.Max(0, attempt - 1)), MaxBackoffMs);
-            try { await Task.Delay(delay, ct); } catch (OperationCanceledException) { break; }
+            // Cap the exponent, not just the final delay: InitialBackoffMs * 2^(attempt-1)
+            // overflows `int` once attempt reaches the low 20s (2000 * 2^21 > int.MaxValue),
+            // wrapping to a negative number that Math.Min then let through uncapped — which
+            // made Task.Delay throw ArgumentOutOfRangeException and silently kill this entire
+            // loop (observed in production: ~2 hours of dead IRC connectivity with no further
+            // reconnect attempts, surfaced only when the process next restarted for an unrelated
+            // reason). MaxExponent=10 is already far more than enough headroom to reach
+            // MaxBackoffMs (2000 * 2^3 = 16000 already exceeds it) with no risk of overflow.
+            const int maxExponent = 10;
+            var exponent = Math.Min(Math.Max(0, attempt - 1), maxExponent);
+            var delay = Math.Min(InitialBackoffMs * (int)Math.Pow(2, exponent), MaxBackoffMs);
+            try { await Task.Delay(delay, ct); }
+            catch (OperationCanceledException) { break; }
+            catch (Exception)
+            {
+                // Defense in depth: whatever happens here, never let it silently kill the
+                // reconnect loop — fall back to the max backoff and keep retrying.
+                try { await Task.Delay(MaxBackoffMs, ct); } catch (OperationCanceledException) { break; }
+            }
         }
     }
 
